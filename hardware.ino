@@ -10,16 +10,19 @@ const char* ssid = "NSUT_WIFI";
 const char* password = "";
 
 
+// Define constants for file paths
+const char* logFilePath = "/log.txt";
+
 //Your Domain name with URL path or IP address with path
-String serverName = "http://192.168.43.36:8000/temperature";
-String rfid = "iWLl1iwYjHaYhyJEgOpx"; // Variable to store the detected RFID UID
+String serverName = "http://10.100.193.107:8000/temperature";
+String rfid = "cA7Pge96eqHOozgQobuc"; // Variable to store the detected RFID UID
 String location="Delhi";
 float temp;
 
 JsonArray arr;
-
-
+bool gotdata=false;
 bool iswifi = false;
+bool dataPresentInBuffer=false;
 
 void setup() {
   Serial.begin(115200);
@@ -44,20 +47,36 @@ void setup() {
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
+  
+  initializeSPIFFS();
+
+  File log = SPIFFS.open(logFilePath, "w");
+  if (!log) {
+    Serial.println("Failed to open file for writing");
+  }
+  else{
+    log.close();
+    Serial.println("log file created");
+  }
+
 }
 
 
 void loop() { 
   temp=readTemperature();
   if (isnan(temp)) {
+   
     Serial.println("No value assigned to temp variable");
     return;
   }
+  logAndAuth();
   int status = 0;
   if(iswifi){
+    dataPresentInBuffer=false;
     status = sendToBackend();
-    delay(3600000);
+    delay(5000);
   }else{
+    dataPresentInBuffer=true;
     // try wifi
     WiFi.begin(ssid, password);
     int times=0;
@@ -74,14 +93,64 @@ void loop() {
       Serial.println("IP address: ");
       Serial.println(WiFi.localIP());
 
-      status=sendToBackend();
+      readAllDataFromFile(logFilePath);
     }
   }
   // status = logAndAuth();
   // readAllDataFromFile();
   Serial.println("");
-  Serial.println(status);
 
+}
+
+
+
+// PRINT ALL THE LOG FILE DATA !! { VVIMP } And send it to the cloud !! { temp data !! }
+void readAllDataFromFile(String path) {
+  WiFiClient client;
+  HTTPClient http;  
+  // Open the file for reading
+  File file = SPIFFS.open(path, "r");
+  if (!file) {
+    Serial.println("Failed to open file for reading");
+    return;
+  }
+
+  // Read data line by line
+  Serial.println("data: ");
+  while (file.available()) {
+    // Read a line from the file
+    String data = file.readStringUntil('\n');
+    // delay(5000);
+    // Serial.print("HTTP Response code: ");
+    // Serial.println(httpResponseCode);
+    http.begin(client, serverName);
+    http.addHeader("Content-Type", "application/json");
+    
+    int httpResponseCode = http.POST(data); 
+    
+    // Free resources
+    http.end();
+  }
+
+  // Close the file
+ file.close();
+}
+
+
+// PUT DATA INTO THE LOG FILE IF WIFI NOT AVAILABLE !!
+int logAndAuth(){
+  // Open the file for reading
+  String data = "{\"rfid\":\"" + rfid + "\", \"" + "temperature\":\"" + temp + "\"}";
+
+  File log = SPIFFS.open(logFilePath, "a");
+  if (!log) {
+      Serial.println("Failed to open file for writing");
+      return 500;
+  }
+  log.println(rfid+" "+temp);
+  Serial.println("log created");
+  log.close();
+  return 200;
 }
 
 
@@ -116,11 +185,20 @@ int sendToBackend(){
     return httpResponseCode;
 }
 
+// Function to initialize SPIFFS
+void initializeSPIFFS() {
+  if (!SPIFFS.begin()) {
+    Serial.println("Failed to initialize SPIFFS");
+    return;
+  }
+  Serial.println("SPIFFS initialized successfully");
+}
+
 
 float readTemperature(){
   
   int sensorValue = analogRead(A0);
-  float voltage = (sensorValue / 1023.0) * 5000; // Convert analog value to voltage (mV)
+  float voltage = (sensorValue / 1023.0) * 3300; // Convert analog value to voltage (mV)
   float temperatureC = voltage / 10; // Convert voltage to temperature (°C)
   String res="This is temp : ";
   res+=(temperatureC);
